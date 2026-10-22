@@ -1,129 +1,119 @@
+# Кампус · LMS
 
+Система управления обучением на **Go 1.23 + GORM + PostgreSQL 17**, **React 19 + TypeScript + Tailwind CSS 4**. Русскоязычный адаптивный интерфейс. Сервер отдаёт API и production-сборку интерфейса с одного домена.
 
+Это самостоятельная LMS с основными учебными сценариями Moodle, **не полная реализация Moodle и его плагинов**. Существующий Larago API оставлен в корне; новое приложение находится в `backend/` и `frontend/`. Старые инструкции: [docs/legacy-README.md](docs/legacy-README.md).
 
+## Возможности
 
-<!-- PROJECT LOGO -->
-<br />
-<p align="center">
+- Регистрация студентов, вход/выход, серверные сессии с HttpOnly cookie. Роли: студент, преподаватель, администратор.
+- Каталог, поиск, категории, черновики и публикация курсов, самостоятельная запись.
+- Модули, текстовые уроки, внешние материалы, отметки прохождения и личный прогресс.
+- Задания: сроки, текстовый ответ/ссылка, повторное редактирование до проверки, балл и обратная связь преподавателя. Просроченная сдача допускается; дата отправки сохраняется.
+- Тесты с одним правильным вариантом: серверная проверка, три попытки, лучший результат в журнале. Правильные ответы студенту не передаются.
+- Календарь сроков, объявления и обсуждение курса, журнал оценок.
+- Глобальные группы пользователей (cohorts), управление составом администратором. Преподаватель привязывает группу к своему курсу. Новые/удалённые участники автоматически записываются/отписываются; ручная запись и запись через другую связанную группу сохраняются. Сохранённые работы при отписке не удаляются.
+- Общий банк контента: страницы, текстовые блоки, ссылки, задания и тесты, включая отдельные вопросы как тест с одним вопросом. Преподаватели могут копировать элементы в свои курсы. Копии независимы от оригинала.
+- Импорт поддерживаемых элементов `.mbz` из Moodle в существующий курс с отчётом о совместимости и добавлением материалов в банк.
 
-  <a href="https://github.com/larago-go/larago">
-    <img src="larago-logo_git.png" alt="Logo" width="100" height="100">
-  </a>
+## Запуск через Docker
 
-  <h3 align="center">LARAGO</h3>
+Для локальной демонстрации (из корня репозитория):
 
-  <p align="center">
-    Structure-inspired laravel written in langue Go
-    <br />
-    <a href="https://github.com/larago-go/larago"><strong>Useful links and documents »</strong></a>
-    <br />
-    <br />
-    <a href="https://github.com/gin-gonic/gin">Gin framework</a>
-    ·
-    <a href="https://gorm.io/docs/">ORM GORM</a>
-    ·
-    <a href="https://docs.mongodb.com/manual/crud/">MongoDB Crud</a>
-    ·
-    <a href="https://github.com/casbin/casbin">Casbin Role</a>
-  </p>
-</p>
-
-
-
-<!-- TABLE OF CONTENTS -->
-## Table of Contents
-
-* [About the Project](#about-the-project)
-* [Specification](#specification)
-* [Getting Started](#getting-started)
-  * [Installation](#installation)
-* [License](#license)
-* [Contact](#contact)
-
-
-<!-- Architecture -->
-## Architecture
-![Architecture][product-arch]
-
-<!-- ABOUT THE PROJECT -->
-## About The Larago
-![Product Name Screen Shot][product-screenshot]
-
-Structure-inspired laravel written in langue Go. The classic structure of the MVC with the implementation of basic authorization and a role management system
- 
-
-<!-- Specification -->
-## Specification
-
-Supports data bases mysql, postgres, sqlite, sqlserver and mongoDB. Session storage cookie, memcache and redis.
-
-Under the hood:
-
-* Gin framework - heart of the project (route, middleware, html template and other) 
-* ORM GORM - the fantastic ORM library for Golang (Supports data bases mysql, postgres, sqlite, sqlserver and crud)
-* MongoDB - MongoDB (Supports data bases mongoDB and crud) see [https://github.com/larago-go/larago-mongodb](https://github.com/larago-go/larago-mongodb)
-* Casbin - An authorization library that supports access control models like ACL, RBAC, ABAC for Golang
-
-
-
-<!-- GETTING STARTED -->
-## Getting Started
-you need Golang 1.19,
-To get a local copy up and running follow these simple steps.
-
-
-
-### Installation
-
-1. Clone the repository to the src/ folder of your directory $GOPATH: [https://golang.org/doc/gopath_code.html](https://golang.org/doc/gopath_code.html)
-
-```sh
-git clone https://github.com/larago-go/larago.git
+```bash
+POSTGRES_PASSWORD=lms_local_dev DEMO_SEED=true docker compose up --build
 ```
-2. Install NPM packages
-```sh
-npm install
+
+Откройте приложение на порту **8080** своей машины. PostgreSQL доступен только на loopback, порт 5432. Данные БД хранятся в Docker volume `postgres_data`. Если порты заняты, остановите конфликтующие локальные сервисы или измените привязки compose. Не используйте `docker compose down -v`, если данные нужны.
+
+`DEMO_SEED=true` заполняет **только пустую БД**. Существующие пользователи/курсы не перезаписываются:
+
+| Роль | Почта | Пароль только для демо |
+|---|---|---|
+| Студент | student@campus.local | Learn2026! |
+| Преподаватель | teacher@campus.local | Learn2026! |
+| Администратор | admin@campus.local | Learn2026! |
+
+Для внешнего размещения задайте собственный пароль PostgreSQL (в compose используйте URL-безопасное значение или передайте правильно закодированный `DATABASE_URL`), `DEMO_SEED=false`, HTTPS и `COOKIE_SECURE=true`. Демоданные и известные пароли не предназначены для публичного размещения. Создание первого администратора без демоданных выполняется оператором: зарегистрируйте пользователя, затем измените `users.role` на `admin` непосредственно в БД.
+
+## Разработка без сборки контейнера приложения
+
+Требуются Go 1.23+, Node.js 24, Docker или существующий PostgreSQL.
+
+```bash
+POSTGRES_PASSWORD=lms_local_dev docker compose up -d db
+cp backend/.env.example backend/.env
+# При необходимости отредактируйте DATABASE_URL в backend/.env.
+cd frontend
+npm ci
+npm run build
+cd ..
+./scripts/dev.sh
 ```
-and
-```sh
+
+Для React HMR запустите вторым процессом `cd frontend && npm run dev`. Vite проксирует `/api` на backend, порт 8080; cookie и проверка Origin работают через один origin. `STATIC_DIR` задаёт папку production-интерфейса. В обычной разработке выполняйте Go-команды **из `backend/`**, а не из корневого legacy-модуля.
+
+Переменные backend:
+
+| Переменная | Назначение |
+|---|---|
+| `DATABASE_URL` | Обязательная строка подключения PostgreSQL |
+| `LISTEN_ADDR` | По умолчанию `127.0.0.1:8080` |
+| `STATIC_DIR` | По умолчанию `../frontend/dist` |
+| `DEMO_SEED` | `true` для наполнения пустой демонстрационной БД |
+| `COOKIE_SECURE` | `true` для cookie только по HTTPS |
+
+GORM выполняет additive `AutoMigrate` при старте. Перед обновлением рабочей БД делайте резервную копию; отдельный версионированный механизм миграций пока не реализован.
+
+## Импорт Moodle
+
+Преподаватель открывает курс → **Импорт Moodle** → выбирает файл `.mbz` → получает отчёт. Импорт добавляет содержимое, не заменяет курс. Повторный запуск создаёт дополнительные копии.
+
+Поддерживаются незашифрованные TAR, TAR/GZIP и ZIP, содержащие `moodle_backup.xml`:
+
+| Moodle | Восстановление |
+|---|---|
+| `section` | Модуль курса |
+| `page`, `book`, `label` | Текстовый материал; HTML преобразуется в обычный текст |
+| `url` | Внешняя ссылка HTTP/HTTPS |
+| `assign` | Задание, условия, максимальный балл, срок |
+| `quiz` | Тест при успешном сопоставлении всех вопросов |
+| `multichoice` с одним ответом, `truefalse` | Вопросы с одним правильным вариантом и серверной проверкой |
+| `questions.xml` | Поддерживаемые вопросы добавляются в общий банк для преподавателей |
+
+Поддержаны старые ссылки `question_instances/questionid` и новая структура `question_bank_entry/question_version` + `question_slot/question_reference`. Проверки используют синтетические фикстуры этих структур; совместимость со всеми версиями/вариантами реальных бэкапов Moodle не гарантируется. Неподдерживаемый вопрос приводит к пропуску всего соответствующего теста, а не к незаметному изменению его содержания. Предупреждение включается в отчёт.
+
+**Не переносятся:** бинарные вложения и `@@PLUGINFILE@@`, пользователи, оценки, попытки и работы студентов, форумы Moodle, SCORM/H5P/LTI, случайные/составные вопросы, вопросы с несколькими правильными ответами, банки сторонних плагинов, веса/штрафы, ограничения доступа, специальные настройки завершения, блоки и темы. Zstandard и зашифрованные бэкапы не поддерживаются. Вложения не скачиваются по внешним ссылкам.
+
+Лимиты: **32 МБ архив, 64 МБ после распаковки, 8 МБ на XML, 5000 файлов**. Защита от обхода путей, симлинков, дубликатов XML и превышения размера. Файлы не извлекаются в файловую систему; запись в БД выполняется транзакцией. Перед переносом рабочего курса проверьте отчёт и результат на тестовой копии.
+
+## Проверки
+
+Создайте отдельную пустую тестовую БД, не используйте рабочую:
+
+```bash
+docker compose exec db createdb -U lms campus_test
+cd backend
+export TEST_DATABASE_URL='postgres://lms:lms_local_dev@127.0.0.1:5432/campus_test?sslmode=disable'
+go mod verify
+go vet ./...
+go test -race -count=1 -v ./...
+go build -mod=readonly ./...
+cd ../frontend
+npm ci
 npm run build
 ```
-3. Rename the file .env.example
-```sh
-mv .env.example .env
-```
 
-4. Сreate a database by default this is mysql(when creating use utf8mb4), you can change it by uncomplexing the necessary values in the files /config/Database.go and /config/CasbinRole.go
+Без `TEST_DATABASE_URL` интеграционные тесты явно пропускаются, выполняются только тесты импортера. Интеграционные тесты используют транзакции с откатом. CI поднимает PostgreSQL и запускает проверки backend и frontend.
 
-5. configure the file .env
+Тестируются роли и запреты доступа, запись и прогресс, сдача/оценка работ, журнал, лимит попыток и серверная проверка, синхронизация глобальных групп и сохранение ручной записи, копирование банка, импорт и прохождение восстановленного теста, старый/новый форматы вопросов, небезопасные архивы, отчёт о пропуске неподдерживаемых элементов.
 
-6. inside your project run the command
-```sh
-go mod tidy | if necessary
-go run main.go
-```
+## Границы текущей версии
 
-7. go to address
-```sh
-http://localhost:8080/
-```
-enjoy!
+Нет полной функциональной совместимости Moodle, произвольного редактора типов вопросов, файлового хранилища, почтовых уведомлений/сброса пароля, SSO, резервного копирования нашей LMS в формат Moodle, расширенной отчётности, компетенций и сертификатов. Развёртывание на публичный сервер и публикация образа не входят в обычный `git push`.
 
-<!-- LICENSE -->
-## License
+## Интерфейс
 
-Distributed under the MIT License. See `LICENSE` for more information.
+[Панель студента](docs/screenshots/dashboard.png) · [Мобильная версия](docs/screenshots/mobile.png)
 
-
-
-<!-- CONTACT -->
-## Contact
-
-
-Project Link: [https://github.com/larago-go/larago](https://github.com/larago-go/larago)
-Author Link: [https://github.com/GuzhavinAleksey](https://github.com/GuzhavinAleksey)
-
-<!-- IMAGES -->
-
-[product-screenshot]: larago_git.png
-[product-arch]: larago-ach.jpg
+При сборке в сети с корпоративным TLS-прокси Dockerfile принимает необязательный BuildKit secret `proxy_ca` (PEM-файл доверенных CA). Он используется только на этапе скачивания зависимостей и не добавляется в образ. Пример: `docker build --secret id=proxy_ca,src=/path/to/ca.pem .`. Обычная сборка не требует этого параметра.
