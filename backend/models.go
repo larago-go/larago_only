@@ -17,15 +17,21 @@ type Session struct {
 	ExpiresAt time.Time
 }
 type Course struct {
-	ID          uint      `json:"id" gorm:"primaryKey"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Category    string    `json:"category"`
-	Color       string    `json:"color"`
-	Published   bool      `json:"published"`
-	TeacherID   uint      `json:"teacher_id" gorm:"index"`
-	Teacher     User      `json:"teacher" gorm:"foreignKey:TeacherID"`
-	CreatedAt   time.Time `json:"created_at"`
+	ShortName             string     `json:"short_name"`
+	Format                string     `json:"format" gorm:"default:topics"`
+	Language              string     `json:"language" gorm:"default:ru"`
+	StartAt               *time.Time `json:"start_at"`
+	EndAt                 *time.Time `json:"end_at"`
+	DisableSelfEnrollment bool       `json:"disable_self_enrollment" gorm:"default:false"`
+	ID                    uint       `json:"id" gorm:"primaryKey"`
+	Title                 string     `json:"title"`
+	Description           string     `json:"description"`
+	Category              string     `json:"category"`
+	Color                 string     `json:"color"`
+	Published             bool       `json:"published"`
+	TeacherID             uint       `json:"teacher_id" gorm:"index"`
+	Teacher               User       `json:"teacher" gorm:"foreignKey:TeacherID"`
+	CreatedAt             time.Time  `json:"created_at"`
 }
 type Enrollment struct {
 	Source    string    `json:"source" gorm:"default:manual"`
@@ -36,6 +42,8 @@ type Enrollment struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 type Section struct {
+	Summary  string   `json:"summary"`
+	Hidden   bool     `json:"hidden" gorm:"default:false"`
 	ID       uint     `json:"id" gorm:"primaryKey"`
 	CourseID uint     `json:"course_id" gorm:"index"`
 	Title    string   `json:"title"`
@@ -43,15 +51,17 @@ type Section struct {
 	Lessons  []Lesson `json:"lessons"`
 }
 type Lesson struct {
-	Kind      string `json:"kind"`
-	URL       string `json:"url"`
-	ID        uint   `json:"id" gorm:"primaryKey"`
-	SectionID uint   `json:"section_id" gorm:"index"`
-	CourseID  uint   `json:"course_id" gorm:"index"`
-	Title     string `json:"title"`
-	Content   string `json:"content"`
-	Duration  int    `json:"duration"`
-	Position  int    `json:"position"`
+	Data      ActivityData `json:"data" gorm:"serializer:json"`
+	Files     []Resource   `json:"files" gorm:"foreignKey:LessonID"`
+	Kind      string       `json:"kind"`
+	URL       string       `json:"url"`
+	ID        uint         `json:"id" gorm:"primaryKey"`
+	SectionID uint         `json:"section_id" gorm:"index;default:0"`
+	CourseID  uint         `json:"course_id" gorm:"index"`
+	Title     string       `json:"title"`
+	Content   string       `json:"content"`
+	Duration  int          `json:"duration"`
+	Position  int          `json:"position"`
 }
 type Completion struct {
 	ID        uint `gorm:"primaryKey"`
@@ -61,6 +71,7 @@ type Completion struct {
 	CreatedAt time.Time
 }
 type Assignment struct {
+	SectionID   uint      `json:"section_id" gorm:"index;default:0"`
 	ID          uint      `json:"id" gorm:"primaryKey"`
 	CourseID    uint      `json:"course_id" gorm:"index"`
 	Title       string    `json:"title"`
@@ -80,6 +91,7 @@ type Submission struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 type Quiz struct {
+	SectionID uint       `json:"section_id" gorm:"index;default:0"`
 	ID        uint       `json:"id" gorm:"primaryKey"`
 	CourseID  uint       `json:"course_id" gorm:"index"`
 	Title     string     `json:"title"`
@@ -109,6 +121,7 @@ type Announcement struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 type Discussion struct {
+	LessonID  uint      `json:"lesson_id" gorm:"index;default:0"`
 	ID        uint      `json:"id" gorm:"primaryKey"`
 	CourseID  uint      `json:"course_id" gorm:"index"`
 	UserID    uint      `json:"user_id"`
@@ -142,6 +155,7 @@ type BankQuestion struct {
 	CorrectIndex int      `json:"correct_index"`
 }
 type BankItem struct {
+	Data      ActivityData   `json:"data" gorm:"serializer:json"`
 	ID        uint           `json:"id" gorm:"primaryKey"`
 	AuthorID  uint           `json:"author_id"`
 	Author    User           `json:"author" gorm:"foreignKey:AuthorID"`
@@ -154,4 +168,35 @@ type BankItem struct {
 	MaxScore  int            `json:"max_score"`
 	Questions []BankQuestion `json:"questions" gorm:"serializer:json"`
 	CreatedAt time.Time      `json:"created_at"`
+}
+
+// Structured data for interactive course resources; no arbitrary HTML is executed.
+type Chapter struct {
+	Title   string `json:"title"`
+	Content string `json:"content"`
+}
+type GlossaryEntry struct {
+	Term       string `json:"term"`
+	Definition string `json:"definition"`
+}
+type ActivityData struct {
+	Chapters []Chapter       `json:"chapters"`
+	Entries  []GlossaryEntry `json:"entries"`
+	Options  []string        `json:"options"`
+}
+type ChoiceVote struct {
+	ID          uint `json:"id" gorm:"primaryKey"`
+	LessonID    uint `json:"lesson_id" gorm:"uniqueIndex:choice_vote"`
+	UserID      uint `json:"-" gorm:"uniqueIndex:choice_vote"`
+	OptionIndex int  `json:"option_index"`
+}
+type Resource struct {
+	ID          uint      `json:"id" gorm:"primaryKey"`
+	LessonID    uint      `json:"lesson_id" gorm:"index;default:0"`
+	CourseID    uint      `json:"-" gorm:"index"`
+	Name        string    `json:"name"`
+	Key         string    `json:"-"`
+	Size        int64     `json:"size"`
+	ContentType string    `json:"content_type"`
+	CreatedAt   time.Time `json:"created_at"`
 }

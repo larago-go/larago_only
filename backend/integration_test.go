@@ -31,7 +31,7 @@ func testApp(t *testing.T) *app {
 		t.Fatal(err)
 	}
 	schemaOnce.Do(func() {
-		if err := db.AutoMigrate(&User{}, &Session{}, &Course{}, &Enrollment{}, &Section{}, &Lesson{}, &Completion{}, &Assignment{}, &Submission{}, &Quiz{}, &Question{}, &Attempt{}, &Announcement{}, &Discussion{}, &Cohort{}, &CohortMember{}, &CourseCohort{}, &BankItem{}); err != nil {
+		if err := migrate(db); err != nil {
 			t.Fatal(err)
 		}
 	})

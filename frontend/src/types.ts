@@ -7,6 +7,12 @@ export interface User {
   created_at: string;
 }
 export interface Course {
+  short_name: string;
+  format: "topics" | "weeks";
+  language: string;
+  start_at: string | null;
+  end_at: string | null;
+  disable_self_enrollment: boolean;
   id: number;
   title: string;
   description: string;
@@ -21,6 +27,8 @@ export interface Course {
   students: number;
 }
 export interface Lesson {
+  data?: ActivityData;
+  files?: Resource[];
   url?: string;
   kind?: string;
   id: number;
@@ -30,12 +38,15 @@ export interface Lesson {
   section_id: number;
 }
 export interface Section {
+  summary: string;
+  hidden: boolean;
   id: number;
   title: string;
   position: number;
   lessons: Lesson[];
 }
 export interface Assignment {
+  section_id: number;
   id: number;
   course_id: number;
   title: string;
@@ -55,6 +66,7 @@ export interface Submission {
   updated_at: string;
 }
 export interface Quiz {
+  section_id: number;
   id: number;
   title: string;
   questions: { id: number; prompt: string; options: string[] }[];
@@ -149,6 +161,7 @@ export interface BankQuestion {
   correct_index: number;
 }
 export interface BankItem {
+  data?: ActivityData;
   id: number;
   author_id: number;
   author: User;
@@ -174,6 +187,32 @@ export const kinds: Record<string, string> = {
   page: "Страница",
   label: "Текст и медиа",
   url: "Внешняя ссылка",
+  assignment: "Задание",
+  quiz: "Тест",
+};
+
+export interface ActivityData {
+  chapters?: { title: string; content: string }[];
+  entries?: { term: string; definition: string }[];
+  options?: string[];
+}
+export interface Resource {
+  id: number;
+  name: string;
+  size: number;
+  content_type: string;
+}
+export const activityKinds: Record<string, string> = {
+  page: "Страница",
+  label: "Текстовый блок",
+  url: "Ссылка",
+  video: "Видео",
+  book: "Книга",
+  file: "Файл",
+  folder: "Папка",
+  forum: "Форум",
+  glossary: "Глоссарий",
+  choice: "Опрос",
   assignment: "Задание",
   quiz: "Тест",
 };

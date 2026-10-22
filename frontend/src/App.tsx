@@ -87,7 +87,12 @@ export default function App() {
     const list = await api<Course[]>("/courses");
     setCourses(list);
     const accessible = list.filter(
-      (c) => c.enrolled || c.teacher_id === user?.id || user?.role === "admin",
+      (c) =>
+        (c.enrolled &&
+          (!c.start_at || new Date(c.start_at) <= new Date()) &&
+          (!c.end_at || new Date(c.end_at) >= new Date())) ||
+        (user?.role === "teacher" && c.teacher_id === user?.id) ||
+        user?.role === "admin",
     );
     const details = await Promise.all(
       accessible.map((c) =>

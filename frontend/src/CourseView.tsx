@@ -15,12 +15,20 @@ import {
   CheckCircle2,
   Lock,
   Users,
+  Pencil,
+  Trash2,
+  ArrowUp,
+  ArrowDown,
+  EyeOff,
+  Library,
 } from "lucide-react";
 import {
   api,
   type Course,
   type User,
   type Detail,
+  type Section,
+  activityKinds,
   type Lesson,
   type Quiz,
   type Assignment,
@@ -31,6 +39,21 @@ import {
 } from "./types";
 import { Cover, Empty, Field, FormModal, Modal, Submit } from "./components";
 import { BankView, CourseCohortsModal, MoodleImport } from "./Extended";
+import {
+  ActivityEditor,
+  ActivityViewer,
+  ElementPicker,
+  TopicEditor,
+  icons,
+} from "./CourseEditor";
+const localDate = (value?: string | null) =>
+  value
+    ? new Date(
+        new Date(value).getTime() - new Date(value).getTimezoneOffset() * 60000,
+      )
+        .toISOString()
+        .slice(0, 16)
+    : "";
 const value = (f: FormData, k: string) => String(f.get(k) || "");
 export function CourseForm({
   course,
@@ -55,6 +78,16 @@ export function CourseForm({
             category: value(f, "category"),
             color: value(f, "color"),
             published: f.get("published") === "on",
+            short_name: value(f, "short_name"),
+            format: value(f, "format"),
+            language: value(f, "language"),
+            disable_self_enrollment: f.get("self_enrollment") !== "on",
+            start_at: f.get("start_at")
+              ? new Date(value(f, "start_at")).toISOString()
+              : null,
+            end_at: f.get("end_at")
+              ? new Date(value(f, "end_at")).toISOString()
+              : null,
           },
         );
         await saved();
@@ -93,13 +126,62 @@ export function CourseForm({
           </select>
         </Field>
       </div>
+      <div className="grid grid-cols-2 gap-4">
+        <Field label="Короткое название">
+          <input
+            name="short_name"
+            maxLength={80}
+            defaultValue={course?.short_name}
+            placeholder="Например, GO-101"
+          />
+        </Field>
+        <Field label="Формат курса">
+          <select name="format" defaultValue={course?.format || "topics"}>
+            <option value="topics">Темы</option>
+            <option value="weeks">Недели</option>
+          </select>
+        </Field>
+        <Field label="Начало доступа">
+          <input
+            type="datetime-local"
+            name="start_at"
+            defaultValue={localDate(course?.start_at)}
+          />
+        </Field>
+        <Field label="Окончание доступа">
+          <input
+            type="datetime-local"
+            name="end_at"
+            defaultValue={localDate(course?.end_at)}
+          />
+        </Field>
+        <Field label="Язык материалов">
+          <select name="language" defaultValue={course?.language || "ru"}>
+            <option value="ru">Русский</option>
+            <option value="en">English</option>
+          </select>
+        </Field>
+      </div>
+      <p className="muted text-xs">
+        Язык обозначает язык материалов; интерфейс платформы остаётся
+        русскоязычным. Вне периода доступа студенты не смогут открывать курс.
+        Преподаватель сохраняет доступ.
+      </p>
+      <label className="flex gap-3 items-center text-sm">
+        <input
+          type="checkbox"
+          name="self_enrollment"
+          defaultChecked={!course?.disable_self_enrollment}
+        />{" "}
+        Разрешить самостоятельную запись
+      </label>
       <label className="flex gap-3 items-center text-sm">
         <input
           type="checkbox"
           name="published"
           defaultChecked={course?.published}
         />{" "}
-        Опубликовать — открыть запись студентам
+        Опубликовать — показывать курс в каталоге
       </label>
     </FormModal>
   );
@@ -208,12 +290,17 @@ export default function CourseView({
     [assignment, setAssignment] = useState<Assignment>(),
     [modal, setModal] = useState(""),
     [section, setSection] = useState(0),
+    [topic, setTopic] = useState<Section>(),
+    [editing, setEditing] = useState<Lesson>(),
+    [kind, setKind] = useState("page"),
     [review, setReview] = useState<Submission>(),
     [message, setMessage] = useState(""),
     [busy, setBusy] = useState(false);
   const course = courses.find((c) => c.id === id);
   const canEdit =
-    !!course && (user.role === "admin" || course.teacher_id === user.id);
+    !!course &&
+    (user.role === "admin" ||
+      (user.role === "teacher" && course.teacher_id === user.id));
   const canRead = canEdit || course?.enrolled;
   const load = async () => {
     setData(await api<Detail>("/courses/" + id));
@@ -288,17 +375,39 @@ export default function CourseView({
         </div>
         <Cover course={course} />
       </div>
+      {(course.short_name || course.start_at || course.end_at) && (
+        <div className="flex flex-wrap gap-3 text-xs muted">
+          <span>{course.short_name}</span>
+          {course.start_at && (
+            <span>Начало доступа: {date(course.start_at)}</span>
+          )}
+          {course.end_at && (
+            <span>Окончание доступа: {date(course.end_at)}</span>
+          )}
+        </div>
+      )}
       {!canRead ? (
         <div className="panel flex flex-wrap items-center justify-between gap-5 p-7">
           <div>
-            <h3>Начните учиться уже сегодня</h3>
+            <h3>
+              {course.disable_self_enrollment
+                ? "Запись через преподавателя"
+                : "Начните учиться уже сегодня"}
+            </h3>
             <p className="muted mt-2">
-              Запишитесь, чтобы открыть уроки, задания и обсуждение.
+              {course.disable_self_enrollment
+                ? "Для записи обратитесь к преподавателю: доступ можно назначить через глобальную группу."
+                : "Запишитесь, чтобы открыть уроки, задания и обсуждение."}
             </p>
           </div>
           <button
             className="btn primary"
-            disabled={busy}
+            disabled={
+              busy ||
+              course.disable_self_enrollment ||
+              (!!course.start_at && new Date(course.start_at) > new Date()) ||
+              (!!course.end_at && new Date(course.end_at) < new Date())
+            }
             onClick={() =>
               void perform(
                 () => api("/courses/" + id + "/enroll", "POST"),
@@ -371,64 +480,299 @@ export default function CourseView({
                   {canEdit && (
                     <button
                       className="text-button"
-                      onClick={() => setModal("section")}
+                      onClick={() => {
+                        setTopic(undefined);
+                        setModal("section");
+                      }}
                     >
-                      <Plus size={16} /> Модуль
+                      <Plus size={16} /> Добавить тему
                     </button>
                   )}
                 </div>
                 {data.sections.map((s, i) => (
-                  <section className="panel module" key={s.id}>
+                  <section
+                    className={
+                      "panel module " + (s.hidden ? "hidden-topic" : "")
+                    }
+                    key={s.id}
+                  >
                     <div className="module-head">
                       <span className="module-num">
                         {String(i + 1).padStart(2, "0")}
                       </span>
                       <div className="flex-1">
-                        <h3>{s.title}</h3>
+                        <h3>
+                          {s.title}{" "}
+                          {s.hidden && (
+                            <span className="badge">
+                              <EyeOff size={12} /> Скрытая тема
+                            </span>
+                          )}
+                        </h3>
                         <p className="muted text-xs mt-1">
-                          {s.lessons.length} уроков
+                          {course.format === "weeks" ? "Неделя" : "Тема"}{" "}
+                          {i + 1} ·{" "}
+                          {s.lessons.length +
+                            data.assignments.filter(
+                              (a) => a.section_id === s.id,
+                            ).length +
+                            data.quizzes.filter((q) => q.section_id === s.id)
+                              .length}{" "}
+                          элементов
+                          {course.format === "weeks" && course.start_at
+                            ? " · " +
+                              date(
+                                new Date(
+                                  new Date(course.start_at).getTime() +
+                                    i * 7 * 86400000,
+                                ).toISOString(),
+                              )
+                            : ""}
                         </p>
                       </div>
                       {canEdit && (
-                        <button
-                          className="icon-btn"
-                          title="Добавить урок"
-                          aria-label="Добавить урок"
-                          onClick={() => {
-                            setSection(s.id);
-                            setModal("lesson");
-                          }}
-                        >
-                          <Plus size={18} />
-                        </button>
+                        <div className="topic-tools">
+                          <button
+                            className="icon-btn"
+                            disabled={busy || i === 0}
+                            aria-label={"Поднять тему " + s.title}
+                            onClick={() =>
+                              void perform(
+                                () =>
+                                  api(
+                                    "/courses/" + id + "/sections/order",
+                                    "PUT",
+                                    {
+                                      ids: data.sections
+                                        .map((v) => v.id)
+                                        .map((v, j) =>
+                                          j === i - 1
+                                            ? s.id
+                                            : j === i
+                                              ? data.sections[i - 1].id
+                                              : v,
+                                        ),
+                                    },
+                                  ),
+                                "Порядок тем обновлён",
+                              )
+                            }
+                          >
+                            <ArrowUp size={15} />
+                          </button>
+                          <button
+                            className="icon-btn"
+                            disabled={busy || i === data.sections.length - 1}
+                            aria-label={"Опустить тему " + s.title}
+                            onClick={() =>
+                              void perform(
+                                () =>
+                                  api(
+                                    "/courses/" + id + "/sections/order",
+                                    "PUT",
+                                    {
+                                      ids: data.sections
+                                        .map((v) => v.id)
+                                        .map((v, j) =>
+                                          j === i + 1
+                                            ? s.id
+                                            : j === i
+                                              ? data.sections[i + 1].id
+                                              : v,
+                                        ),
+                                    },
+                                  ),
+                                "Порядок тем обновлён",
+                              )
+                            }
+                          >
+                            <ArrowDown size={15} />
+                          </button>
+                          <button
+                            className="icon-btn"
+                            aria-label={"Настроить тему " + s.title}
+                            onClick={() => {
+                              setTopic(s);
+                              setModal("section");
+                            }}
+                          >
+                            <Pencil size={15} />
+                          </button>
+                          <button
+                            className="icon-btn"
+                            aria-label={"Удалить тему " + s.title}
+                            disabled={busy}
+                            onClick={() => {
+                              if (
+                                window.confirm(
+                                  "Удалить тему «" +
+                                    s.title +
+                                    "»? Удаление возможно только для пустой темы.",
+                                )
+                              )
+                                void perform(
+                                  () => api("/sections/" + s.id, "DELETE"),
+                                  "Тема удалена",
+                                );
+                            }}
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
                       )}
                     </div>
-                    {s.lessons.map((l) => (
-                      <button
-                        className="lesson-row"
-                        key={l.id}
-                        onClick={() => setLesson(l)}
-                      >
-                        <span
-                          className={
-                            "lesson-check " +
-                            (data.completed.includes(l.id) ? "done" : "")
-                          }
-                        >
-                          {data.completed.includes(l.id) ? (
-                            <Check size={15} />
-                          ) : (
-                            <FileText size={15} />
+                    {s.summary && <p className="topic-summary">{s.summary}</p>}
+                    {s.lessons.map((l) => {
+                      const Icon = icons[l.kind || "page"] || FileText;
+                      return (
+                        <div className="element-row" key={l.id}>
+                          <button
+                            className="lesson-row"
+                            onClick={() => setLesson(l)}
+                          >
+                            <span
+                              className={
+                                "lesson-check " +
+                                (data.completed.includes(l.id) ? "done" : "")
+                              }
+                            >
+                              {data.completed.includes(l.id) ? (
+                                <Check size={15} />
+                              ) : (
+                                <Icon size={15} />
+                              )}
+                            </span>
+                            <span className="flex-1 text-left">
+                              <b className="font-medium">{l.title}</b>
+                              <small>
+                                {activityKinds[l.kind || "page"] || "Страница"}
+                                {l.kind === "folder"
+                                  ? " · " + (l.files?.length || 0) + " файлов"
+                                  : ""}
+                              </small>
+                              {l.kind === "label" && (
+                                <span className="inline-label">
+                                  {l.content}
+                                </span>
+                              )}
+                            </span>
+                            <ChevronRight
+                              size={15}
+                              className="text-slate-400"
+                            />
+                          </button>
+                          {canEdit && (
+                            <div className="element-tools">
+                              {l.kind !== "file" && l.kind !== "folder" && (
+                                <button
+                                  className="icon-btn"
+                                  aria-label={"Сохранить в банк " + l.title}
+                                  disabled={busy}
+                                  onClick={() =>
+                                    void perform(
+                                      () =>
+                                        api(
+                                          "/lessons/" + l.id + "/bank",
+                                          "POST",
+                                        ),
+                                      "Элемент сохранён в банк контента",
+                                    )
+                                  }
+                                >
+                                  <Library size={14} />
+                                </button>
+                              )}
+                              <button
+                                className="icon-btn"
+                                aria-label={"Редактировать элемент " + l.title}
+                                onClick={() => {
+                                  setEditing(l);
+                                  setKind(l.kind || "page");
+                                  setSection(s.id);
+                                  setModal("activity");
+                                }}
+                              >
+                                <Pencil size={14} />
+                              </button>
+                              <button
+                                className="icon-btn"
+                                aria-label={"Удалить элемент " + l.title}
+                                disabled={busy}
+                                onClick={() => {
+                                  if (
+                                    window.confirm(
+                                      "Удалить элемент «" +
+                                        l.title +
+                                        "», его файлы и прогресс прохождения?",
+                                    )
+                                  )
+                                    void perform(
+                                      () => api("/lessons/" + l.id, "DELETE"),
+                                      "Элемент удалён",
+                                    );
+                                }}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
                           )}
-                        </span>
-                        <span className="flex-1 text-left">{l.title}</span>
-                        <span className="text-xs text-slate-400 flex gap-1 items-center">
-                          <Clock size={12} />
-                          {l.duration} мин
-                        </span>
-                        <ChevronRight size={15} className="text-slate-400" />
+                        </div>
+                      );
+                    })}
+                    {data.assignments
+                      .filter((a) => a.section_id === s.id)
+                      .map((a) => (
+                        <button
+                          key={"a" + a.id}
+                          className="lesson-row"
+                          onClick={() => {
+                            setTab("tasks");
+                            if (!canEdit) setAssignment(a);
+                          }}
+                        >
+                          <span className="activity-icon orange">
+                            <FileText size={17} />
+                          </span>
+                          <span className="flex-1 text-left">
+                            {a.title}
+                            <small>Задание · до {a.max_score} баллов</small>
+                          </span>
+                          <ChevronRight size={15} />
+                        </button>
+                      ))}
+                    {data.quizzes
+                      .filter((q) => q.section_id === s.id)
+                      .map((q) => (
+                        <button
+                          key={"q" + q.id}
+                          className="lesson-row"
+                          onClick={() => {
+                            setTab("tasks");
+                            if (!canEdit) setQuiz(q);
+                          }}
+                        >
+                          <span className="activity-icon violet">
+                            <ClipboardCheck size={17} />
+                          </span>
+                          <span className="flex-1 text-left">
+                            {q.title}
+                            <small>Тест · {q.questions.length} вопросов</small>
+                          </span>
+                          <ChevronRight size={15} />
+                        </button>
+                      ))}
+                    {canEdit && (
+                      <button
+                        className="add-element"
+                        onClick={() => {
+                          setSection(s.id);
+                          setEditing(undefined);
+                          setModal("picker");
+                        }}
+                      >
+                        <Plus size={16} /> Добавить элемент или ресурс
                       </button>
-                    ))}
+                    )}
                   </section>
                 ))}
                 {!data.sections.length && (
@@ -489,7 +833,10 @@ export default function CourseView({
                 {canEdit && (
                   <button
                     className="btn"
-                    onClick={() => setModal("assignment")}
+                    onClick={() => {
+                      setSection(0);
+                      setModal("assignment");
+                    }}
                   >
                     <Plus size={16} /> Задание
                   </button>
@@ -550,6 +897,14 @@ export default function CourseView({
                     )}
                     {canEdit && (
                       <div className="mt-5 border-t border-slate-100 pt-4">
+                        <TopicPlacement
+                          kind="assignments"
+                          itemId={as.id}
+                          sectionId={as.section_id}
+                          sections={data.sections}
+                          saved={saved}
+                          notify={notify}
+                        />
                         <span className="eyebrow">РАБОТЫ СТУДЕНТОВ</span>
                         {data.submissions
                           .filter((s) => s.assignment_id === as.id)
@@ -589,7 +944,13 @@ export default function CourseView({
               <div className="section-heading">
                 <h2>Проверьте себя</h2>
                 {canEdit && (
-                  <button className="btn" onClick={() => setModal("quiz")}>
+                  <button
+                    className="btn"
+                    onClick={() => {
+                      setSection(0);
+                      setModal("quiz");
+                    }}
+                  >
                     <Plus size={16} /> Тест
                   </button>
                 )}
@@ -614,6 +975,16 @@ export default function CourseView({
                           ` · лучший результат ${Math.max(...attempts.map((a) => Math.round((a.score / a.total) * 100)))}%`}
                       </p>
                     </div>
+                    {canEdit && (
+                      <TopicPlacement
+                        kind="quizzes"
+                        itemId={q.id}
+                        sectionId={q.section_id}
+                        sections={data.sections}
+                        saved={saved}
+                        notify={notify}
+                      />
+                    )}
                     {!canEdit && (
                       <button
                         className="btn primary"
@@ -703,40 +1074,16 @@ export default function CourseView({
         </>
       )}
       {lesson && data && (
-        <Modal title={lesson.title} close={() => setLesson(undefined)}>
-          <div className="flex items-center gap-2 muted text-sm mb-6">
-            <Clock size={15} />
-            {lesson.duration} минут на изучение
-          </div>
-          <article className="lesson-content">{lesson.content}</article>
-          {lesson.url && /^https?:\/\//.test(lesson.url) && (
-            <a
-              className="btn mt-5"
-              href={lesson.url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              Открыть внешний материал ↗
-            </a>
-          )}
-          <div className="flex justify-end mt-7">
-            <button
-              className="btn primary"
-              disabled={busy || data.completed.includes(lesson.id)}
-              onClick={() =>
-                void perform(
-                  () => api("/lessons/" + lesson.id + "/complete", "POST"),
-                  "Урок пройден!",
-                )
-              }
-            >
-              <CheckCircle2 size={17} />
-              {data.completed.includes(lesson.id)
-                ? "Урок пройден"
-                : "Отметить пройденным"}
-            </button>
-          </div>
-        </Modal>
+        <ActivityViewer
+          lesson={lesson}
+          user={user}
+          completed={data.completed.includes(lesson.id)}
+          close={() => setLesson(undefined)}
+          complete={async () => {
+            await api("/lessons/" + lesson.id + "/complete", "POST");
+            await saved();
+          }}
+        />
       )}
       {assignment && data && (
         <AssignmentModal
@@ -817,51 +1164,31 @@ export default function CourseView({
         <CourseForm course={course} close={() => setModal("")} saved={saved} />
       )}
       {modal === "section" && (
-        <FormModal
-          title="Новый модуль"
+        <TopicEditor
+          topic={topic}
+          course={course}
           close={() => setModal("")}
-          submit={async (f) => {
-            await api("/courses/" + id + "/sections", "POST", {
-              title: value(f, "title"),
-            });
-            await saved();
-          }}
-        >
-          <Field label="Название модуля">
-            <input required minLength={2} maxLength={200} name="title" />
-          </Field>
-        </FormModal>
+          saved={saved}
+        />
       )}
-      {modal === "lesson" && (
-        <FormModal
-          title="Новый урок"
+      {modal === "picker" && (
+        <ElementPicker
           close={() => setModal("")}
-          submit={async (f) => {
-            await api("/sections/" + section + "/lessons", "POST", {
-              title: value(f, "title"),
-              content: value(f, "content"),
-              duration: Number(f.get("duration")),
-            });
-            await saved();
+          select={(k) => {
+            setKind(k);
+            setModal(k === "assignment" || k === "quiz" ? k : "activity");
           }}
-        >
-          <Field label="Название">
-            <input name="title" required minLength={2} maxLength={200} />
-          </Field>
-          <Field label="Материал урока">
-            <textarea name="content" rows={10} required maxLength={100000} />
-          </Field>
-          <Field label="Длительность, минут">
-            <input
-              name="duration"
-              type="number"
-              min={1}
-              max={1000}
-              defaultValue={15}
-              required
-            />
-          </Field>
-        </FormModal>
+        />
+      )}
+      {modal === "activity" && data && (
+        <ActivityEditor
+          kind={kind}
+          lesson={editing}
+          sectionId={section}
+          sections={data.sections}
+          close={() => setModal("")}
+          saved={saved}
+        />
       )}
       {modal === "assignment" && (
         <FormModal
@@ -873,12 +1200,23 @@ export default function CourseView({
               description: value(f, "description"),
               due_at: new Date(value(f, "due_at")).toISOString(),
               max_score: Number(f.get("max_score")),
+              section_id: Number(f.get("section_id") || 0),
             });
             await saved();
           }}
         >
           <Field label="Название">
             <input required minLength={2} maxLength={200} name="title" />
+          </Field>
+          <Field label="Тема курса">
+            <select name="section_id" defaultValue={section}>
+              <option value={0}>Вне тем</option>
+              {data?.sections.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.title}
+                </option>
+              ))}
+            </select>
           </Field>
           <Field label="Условия задания">
             <textarea name="description" rows={5} required />
@@ -927,7 +1265,13 @@ export default function CourseView({
         </FormModal>
       )}
       {modal === "quiz" && (
-        <QuizEditor courseId={id} close={() => setModal("")} saved={saved} />
+        <QuizEditor
+          courseId={id}
+          sections={data?.sections || []}
+          sectionId={section}
+          close={() => setModal("")}
+          saved={saved}
+        />
       )}
     </div>
   );
@@ -1078,10 +1422,14 @@ function QuizModal({
 }
 function QuizEditor({
   courseId,
+  sections,
+  sectionId,
   close,
   saved,
 }: {
   courseId: number;
+  sections: Section[];
+  sectionId: number;
   close: () => void;
   saved: () => Promise<void>;
 }) {
@@ -1096,12 +1444,23 @@ function QuizEditor({
         await api("/courses/" + courseId + "/quizzes", "POST", {
           title: value(f, "title"),
           questions,
+          section_id: Number(f.get("section_id") || 0),
         });
         await saved();
       }}
     >
       <Field label="Название теста">
         <input required minLength={2} maxLength={200} name="title" />
+      </Field>
+      <Field label="Тема курса">
+        <select name="section_id" defaultValue={sectionId}>
+          <option value={0}>Вне тем</option>
+          {sections.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.title}
+            </option>
+          ))}
+        </select>
       </Field>
       {questions.map((q, i) => (
         <div className="quiz-edit" key={i}>
@@ -1184,5 +1543,49 @@ function QuizEditor({
         <Plus size={16} /> Ещё вопрос
       </button>
     </FormModal>
+  );
+}
+
+function TopicPlacement({
+  kind,
+  itemId,
+  sectionId,
+  sections,
+  saved,
+  notify,
+}: {
+  kind: string;
+  itemId: number;
+  sectionId: number;
+  sections: Section[];
+  saved: () => Promise<void>;
+  notify: (s: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="mb-4 max-w-xs">
+      <Field label="Разместить в теме">
+        <select
+          value={sectionId || 0}
+          disabled={busy}
+          onChange={(e) => {
+            setBusy(true);
+            void api("/" + kind + "/" + itemId + "/topic", "PATCH", {
+              section_id: Number(e.target.value),
+            })
+              .then(saved)
+              .catch((e) => notify(e.message))
+              .finally(() => setBusy(false));
+          }}
+        >
+          <option value={0}>Вне тем</option>
+          {sections.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.title}
+            </option>
+          ))}
+        </select>
+      </Field>
+    </div>
   );
 }

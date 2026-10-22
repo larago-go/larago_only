@@ -178,6 +178,10 @@ func (a *app) access(w http.ResponseWriter, r *http.Request, courseID uint, writ
 		fail(w, 403, "Только преподаватель этого курса может изменять материалы")
 		return c, false
 	}
+	if msg := courseAvailability(c); msg != "" {
+		fail(w, 403, msg)
+		return c, false
+	}
 	var n int64
 	a.db.Model(&Enrollment{}).Where("course_id = ? AND user_id = ?", c.ID, u.ID).Count(&n)
 	if n == 0 || !c.Published {
@@ -207,8 +211,8 @@ func (a *app) courses(w http.ResponseWriter, r *http.Request) {
 	for _, c := range courses {
 		var e, n, total, students int64
 		a.db.Model(&Enrollment{}).Where("course_id = ? AND user_id = ?", c.ID, u.ID).Count(&e)
-		a.db.Model(&Completion{}).Where("course_id = ? AND user_id = ?", c.ID, u.ID).Count(&n)
-		a.db.Model(&Lesson{}).Where("course_id = ?", c.ID).Count(&total)
+		a.db.Model(&Completion{}).Where("course_id = ? AND user_id = ?", c.ID, u.ID).Where("lesson_id IN (?)", a.visibleLessonIDs(r, c)).Count(&n)
+		a.db.Model(&Lesson{}).Where("id IN (?)", a.visibleLessonIDs(r, c)).Count(&total)
 		a.db.Model(&Enrollment{}).Where("course_id = ?", c.ID).Count(&students)
 		out = append(out, item{c, e > 0, n, total, students})
 	}
@@ -224,11 +228,17 @@ func (a *app) saveCourse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Title       string `json:"title"`
-		Description string `json:"description"`
-		Category    string `json:"category"`
-		Color       string `json:"color"`
-		Published   bool   `json:"published"`
+		Title                 string          `json:"title"`
+		Description           string          `json:"description"`
+		Category              string          `json:"category"`
+		Color                 string          `json:"color"`
+		Published             bool            `json:"published"`
+		ShortName             *string         `json:"short_name"`
+		Format                *string         `json:"format"`
+		Language              *string         `json:"language"`
+		StartAt               json.RawMessage `json:"start_at"`
+		EndAt                 json.RawMessage `json:"end_at"`
+		DisableSelfEnrollment *bool           `json:"disable_self_enrollment"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -246,6 +256,46 @@ func (a *app) saveCourse(w http.ResponseWriter, r *http.Request) {
 		c.ID = old.ID
 		c.TeacherID = old.TeacherID
 		c.CreatedAt = old.CreatedAt
+		c.StartAt = old.StartAt
+		c.EndAt = old.EndAt
+		c.ShortName = old.ShortName
+		c.Format = old.Format
+		c.Language = old.Language
+		c.DisableSelfEnrollment = old.DisableSelfEnrollment
+	}
+	if in.ShortName != nil {
+		c.ShortName = strings.TrimSpace(*in.ShortName)
+	}
+	if in.Format != nil {
+		c.Format = *in.Format
+	}
+	if c.Format == "" {
+		c.Format = "topics"
+	}
+	if in.Language != nil {
+		c.Language = *in.Language
+	}
+	if c.Language == "" {
+		c.Language = "ru"
+	}
+	if in.DisableSelfEnrollment != nil {
+		c.DisableSelfEnrollment = *in.DisableSelfEnrollment
+	}
+	if len(in.StartAt) > 0 {
+		if json.Unmarshal(in.StartAt, &c.StartAt) != nil {
+			fail(w, 400, "Некорректная дата начала")
+			return
+		}
+	}
+	if len(in.EndAt) > 0 {
+		if json.Unmarshal(in.EndAt, &c.EndAt) != nil {
+			fail(w, 400, "Некорректная дата окончания")
+			return
+		}
+	}
+	if len(c.ShortName) > 80 || (c.Format != "topics" && c.Format != "weeks") || (c.Language != "ru" && c.Language != "en") || (c.StartAt != nil && c.EndAt != nil && !c.EndAt.After(*c.StartAt)) {
+		fail(w, 400, "Проверьте формат, язык и даты курса")
+		return
 	}
 	if !a.result(w, a.db.Save(&c).Error) {
 		return
@@ -257,6 +307,14 @@ func (a *app) enroll(w http.ResponseWriter, r *http.Request) {
 	var c Course
 	if a.db.Where("published = ?", true).First(&c, id(r, "course")).Error != nil {
 		fail(w, 404, "Курс не найден")
+		return
+	}
+	if c.DisableSelfEnrollment {
+		fail(w, 403, "Самостоятельная запись отключена. Обратитесь к преподавателю для записи через группу")
+		return
+	}
+	if msg := courseAvailability(c); msg != "" {
+		fail(w, 403, msg)
 		return
 	}
 	u := current(r)
@@ -277,17 +335,21 @@ func (a *app) detail(w http.ResponseWriter, r *http.Request) {
 	}
 	u := current(r)
 	sections := []Section{}
-	a.db.Preload("Lessons", func(db *gorm.DB) *gorm.DB { return db.Order("position, id") }).Where("course_id = ?", c.ID).Order("position, id").Find(&sections)
+	sectionQuery := a.db
+	if u.Role != "admin" && !(u.Role == "teacher" && c.TeacherID == u.ID) {
+		sectionQuery = sectionQuery.Where("hidden = ?", false)
+	}
+	sectionQuery.Preload("Lessons.Files").Preload("Lessons", func(db *gorm.DB) *gorm.DB { return db.Order("position, id") }).Where("course_id = ?", c.ID).Order("position, id").Find(&sections)
 	assignments := []Assignment{}
-	a.db.Where("course_id = ?", c.ID).Order("due_at, id").Find(&assignments)
+	a.visibleActivities(r, a.db.Where("course_id = ?", c.ID), c).Order("due_at, id").Find(&assignments)
 	quizzes := []Quiz{}
-	a.db.Preload("Questions", func(db *gorm.DB) *gorm.DB { return db.Order("id") }).Where("course_id = ?", c.ID).Find(&quizzes)
+	a.visibleActivities(r, a.db.Preload("Questions", func(db *gorm.DB) *gorm.DB { return db.Order("id") }).Where("course_id = ?", c.ID), c).Find(&quizzes)
 	completed := []uint{}
-	a.db.Model(&Completion{}).Where("course_id = ? AND user_id = ?", c.ID, u.ID).Pluck("lesson_id", &completed)
+	a.db.Model(&Completion{}).Where("course_id = ? AND user_id = ?", c.ID, u.ID).Where("lesson_id IN (?)", a.visibleLessonIDs(r, c)).Pluck("lesson_id", &completed)
 	announcements := []Announcement{}
 	a.db.Where("course_id = ?", c.ID).Order("created_at DESC").Find(&announcements)
 	posts := []Discussion{}
-	a.db.Preload("User").Where("course_id = ?", c.ID).Order("created_at DESC").Limit(100).Find(&posts)
+	a.db.Preload("User").Where("course_id = ? AND lesson_id = 0", c.ID).Order("created_at DESC").Limit(100).Find(&posts)
 	submissions := []Submission{}
 	q := a.db.Preload("User").Joins("JOIN assignments ON assignments.id = submissions.assignment_id").Where("assignments.course_id = ?", c.ID)
 	if u.Role != "admin" && c.TeacherID != u.ID {
@@ -302,63 +364,13 @@ func (a *app) detail(w http.ResponseWriter, r *http.Request) {
 	aq.Order("attempts.id DESC").Find(&attempts)
 	reply(w, 200, map[string]any{"course": c, "sections": sections, "assignments": assignments, "quizzes": quizzes, "completed": completed, "announcements": announcements, "discussions": posts, "submissions": submissions, "attempts": attempts})
 }
-func (a *app) addSection(w http.ResponseWriter, r *http.Request) {
-	c, ok := a.access(w, r, id(r, "course"), true)
-	if !ok {
-		return
-	}
-	var in struct {
-		Title string `json:"title"`
-	}
-	if !decode(w, r, &in) {
-		return
-	}
-	if len(strings.TrimSpace(in.Title)) < 2 || len(in.Title) > 200 {
-		fail(w, 400, "Укажите название модуля")
-		return
-	}
-	var n int64
-	a.db.Model(&Section{}).Where("course_id = ?", c.ID).Count(&n)
-	s := Section{CourseID: c.ID, Title: in.Title, Position: int(n) + 1, Lessons: []Lesson{}}
-	if a.result(w, a.db.Create(&s).Error) {
-		reply(w, 201, s)
-	}
-}
-func (a *app) addLesson(w http.ResponseWriter, r *http.Request) {
-	var s Section
-	if a.db.First(&s, id(r, "section")).Error != nil {
-		fail(w, 404, "Модуль не найден")
-		return
-	}
-	if _, ok := a.access(w, r, s.CourseID, true); !ok {
-		return
-	}
-	var in struct {
-		Title    string `json:"title"`
-		Content  string `json:"content"`
-		Duration int    `json:"duration"`
-	}
-	if !decode(w, r, &in) {
-		return
-	}
-	if len(strings.TrimSpace(in.Title)) < 2 || len(in.Title) > 200 || len(in.Content) > 100000 || in.Duration < 1 || in.Duration > 1000 {
-		fail(w, 400, "Проверьте название, текст и длительность урока")
-		return
-	}
-	var n int64
-	a.db.Model(&Lesson{}).Where("section_id = ?", s.ID).Count(&n)
-	l := Lesson{SectionID: s.ID, CourseID: s.CourseID, Title: in.Title, Content: in.Content, Duration: in.Duration, Position: int(n) + 1}
-	if a.result(w, a.db.Create(&l).Error) {
-		reply(w, 201, l)
-	}
-}
 func (a *app) complete(w http.ResponseWriter, r *http.Request) {
 	var l Lesson
 	if a.db.First(&l, id(r, "lesson")).Error != nil {
 		fail(w, 404, "Урок не найден")
 		return
 	}
-	if _, ok := a.access(w, r, l.CourseID, false); !ok {
+	if _, ok := a.topicAccess(w, r, l.CourseID, l.SectionID, false); !ok {
 		return
 	}
 	u := current(r)
@@ -374,6 +386,7 @@ func (a *app) addAssignment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
+		SectionID   uint      `json:"section_id"`
 		Title       string    `json:"title"`
 		Description string    `json:"description"`
 		DueAt       time.Time `json:"due_at"`
@@ -386,7 +399,10 @@ func (a *app) addAssignment(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Проверьте название, срок и максимальный балл")
 		return
 	}
-	v := Assignment{CourseID: c.ID, Title: in.Title, Description: in.Description, DueAt: in.DueAt, MaxScore: in.MaxScore}
+	if !a.validSection(w, c.ID, in.SectionID) {
+		return
+	}
+	v := Assignment{SectionID: in.SectionID, CourseID: c.ID, Title: in.Title, Description: in.Description, DueAt: in.DueAt, MaxScore: in.MaxScore}
 	if a.result(w, a.db.Create(&v).Error) {
 		reply(w, 201, v)
 	}
@@ -397,7 +413,7 @@ func (a *app) submit(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "Задание не найдено")
 		return
 	}
-	if _, ok := a.access(w, r, as.CourseID, false); !ok {
+	if _, ok := a.topicAccess(w, r, as.CourseID, as.SectionID, false); !ok {
 		return
 	}
 	u := current(r)
@@ -469,6 +485,7 @@ func (a *app) addQuiz(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
+		SectionID uint   `json:"section_id"`
 		Title     string `json:"title"`
 		Questions []struct {
 			Prompt       string   `json:"prompt"`
@@ -483,7 +500,10 @@ func (a *app) addQuiz(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Добавьте название и от 1 до 50 вопросов")
 		return
 	}
-	q := Quiz{Title: in.Title, CourseID: c.ID}
+	if !a.validSection(w, c.ID, in.SectionID) {
+		return
+	}
+	q := Quiz{SectionID: in.SectionID, Title: in.Title, CourseID: c.ID}
 	for _, v := range in.Questions {
 		if len(v.Prompt) < 2 || len(v.Prompt) > 2000 || len(v.Options) < 2 || len(v.Options) > 8 || v.CorrectIndex < 0 || v.CorrectIndex >= len(v.Options) {
 			fail(w, 400, "Проверьте вопросы и правильные ответы")
@@ -507,7 +527,7 @@ func (a *app) attempt(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "Тест не найден")
 		return
 	}
-	if _, ok := a.access(w, r, q.CourseID, false); !ok {
+	if _, ok := a.topicAccess(w, r, q.CourseID, q.SectionID, false); !ok {
 		return
 	}
 	u := current(r)
@@ -612,15 +632,15 @@ func (a *app) gradebook(w http.ResponseWriter, r *http.Request) {
 	}
 	q.Order("id").Find(&enrollments)
 	as := []Assignment{}
-	a.db.Where("course_id = ?", c.ID).Find(&as)
+	a.visibleActivities(r, a.db.Where("course_id = ?", c.ID), c).Find(&as)
 	quizzes := []Quiz{}
-	a.db.Where("course_id = ?", c.ID).Find(&quizzes)
+	a.visibleActivities(r, a.db.Where("course_id = ?", c.ID), c).Find(&quizzes)
 	var lessons int64
-	a.db.Model(&Lesson{}).Where("course_id = ?", c.ID).Count(&lessons)
+	a.db.Model(&Lesson{}).Where("id IN (?)", a.visibleLessonIDs(r, c)).Count(&lessons)
 	rows := []map[string]any{}
 	for _, e := range enrollments {
 		var complete int64
-		a.db.Model(&Completion{}).Where("course_id = ? AND user_id = ?", c.ID, e.UserID).Count(&complete)
+		a.db.Model(&Completion{}).Where("course_id = ? AND user_id = ?", c.ID, e.UserID).Where("lesson_id IN (?)", a.visibleLessonIDs(r, c)).Count(&complete)
 		subs := []Submission{}
 		a.db.Where("user_id = ? AND assignment_id IN (?)", e.UserID, a.db.Model(&Assignment{}).Select("id").Where("course_id = ?", c.ID)).Find(&subs)
 		attempts := []Attempt{}
@@ -746,7 +766,7 @@ func main() {
 	sql.SetMaxOpenConns(10)
 	sql.SetMaxIdleConns(5)
 	sql.SetConnMaxLifetime(time.Hour)
-	if err = db.AutoMigrate(&User{}, &Session{}, &Course{}, &Enrollment{}, &Section{}, &Lesson{}, &Completion{}, &Assignment{}, &Submission{}, &Quiz{}, &Question{}, &Attempt{}, &Announcement{}, &Discussion{}, &Cohort{}, &CohortMember{}, &CourseCohort{}, &BankItem{}); err != nil {
+	if err = migrate(db); err != nil {
 		log.Fatal(err)
 	}
 	if os.Getenv("DEMO_SEED") == "true" {

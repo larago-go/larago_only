@@ -17,6 +17,10 @@ func validateBank(v BankItem) string {
 		return "Проверьте название и размер материала"
 	}
 	switch v.Kind {
+	case "book", "glossary", "choice", "forum", "video":
+		if msg := validateActivity(lessonInput{Title: v.Title, Content: v.Body, Kind: v.Kind, URL: v.URL, Duration: 10, Data: v.Data}); msg != "" {
+			return msg
+		}
 	case "page", "label":
 	case "url":
 		if !validURL(v.URL) {
@@ -59,6 +63,7 @@ func (a *app) createBank(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
+		Data      ActivityData   `json:"data"`
 		Title     string         `json:"title"`
 		Category  string         `json:"category"`
 		Kind      string         `json:"kind"`
@@ -71,7 +76,7 @@ func (a *app) createBank(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &in) {
 		return
 	}
-	v := BankItem{Title: in.Title, Category: in.Category, Kind: in.Kind, Body: in.Body, URL: in.URL, Duration: in.Duration, MaxScore: in.MaxScore, Questions: in.Questions, AuthorID: current(r).ID}
+	v := BankItem{Data: in.Data, Title: in.Title, Category: in.Category, Kind: in.Kind, Body: in.Body, URL: in.URL, Duration: in.Duration, MaxScore: in.MaxScore, Questions: in.Questions, AuthorID: current(r).ID}
 	if msg := validateBank(v); msg != "" {
 		fail(w, 400, msg)
 		return
@@ -103,9 +108,9 @@ func copyBank(tx *gorm.DB, v BankItem, courseID, sectionID uint, due time.Time) 
 		if due.IsZero() {
 			due = time.Now().AddDate(0, 0, 7)
 		}
-		return tx.Create(&Assignment{CourseID: courseID, Title: v.Title, Description: v.Body, MaxScore: v.MaxScore, DueAt: due}).Error
+		return tx.Create(&Assignment{SectionID: sectionID, CourseID: courseID, Title: v.Title, Description: v.Body, MaxScore: v.MaxScore, DueAt: due}).Error
 	case "quiz":
-		q := Quiz{CourseID: courseID, Title: v.Title}
+		q := Quiz{SectionID: sectionID, CourseID: courseID, Title: v.Title}
 		for _, question := range v.Questions {
 			q.Questions = append(q.Questions, Question{Prompt: question.Prompt, Options: question.Options, CorrectIndex: question.CorrectIndex})
 		}
@@ -124,7 +129,7 @@ func copyBank(tx *gorm.DB, v BankItem, courseID, sectionID uint, due time.Time) 
 		if duration < 1 {
 			duration = 10
 		}
-		return tx.Create(&Lesson{CourseID: courseID, SectionID: sectionID, Title: v.Title, Content: v.Body, Kind: v.Kind, URL: v.URL, Duration: duration, Position: int(n) + 1}).Error
+		return tx.Create(&Lesson{CourseID: courseID, SectionID: sectionID, Title: v.Title, Content: v.Body, Data: v.Data, Kind: v.Kind, URL: v.URL, Duration: duration, Position: int(n) + 1}).Error
 	}
 }
 func (a *app) useBank(w http.ResponseWriter, r *http.Request) {
@@ -154,5 +159,33 @@ func (a *app) useBank(w http.ResponseWriter, r *http.Request) {
 	}
 	if a.result(w, a.db.Transaction(func(tx *gorm.DB) error { return copyBank(tx, v, c.ID, in.SectionID, in.DueAt) })) {
 		reply(w, 201, map[string]bool{"ok": true})
+	}
+}
+
+func (a *app) saveActivityToBank(w http.ResponseWriter, r *http.Request) {
+	var l Lesson
+	if a.db.First(&l, id(r, "lesson")).Error != nil {
+		fail(w, 404, "Элемент не найден")
+		return
+	}
+	c, ok := a.access(w, r, l.CourseID, true)
+	if !ok {
+		return
+	}
+	if l.Kind == "file" || l.Kind == "folder" {
+		fail(w, 400, "Копирование файлов через банк не поддерживается")
+		return
+	}
+	kind := l.Kind
+	if kind == "" {
+		kind = "page"
+	}
+	v := BankItem{AuthorID: current(r).ID, Title: l.Title, Category: c.Category, Kind: kind, Body: l.Content, URL: l.URL, Duration: l.Duration, Data: l.Data}
+	if msg := validateBank(v); msg != "" {
+		fail(w, 400, msg)
+		return
+	}
+	if a.result(w, a.db.Create(&v).Error) {
+		reply(w, 201, v)
 	}
 }

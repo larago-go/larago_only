@@ -23,6 +23,7 @@ func admin(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 func (a *app) extendedRoutes(m *http.ServeMux) {
+	a.activityRoutes(m)
 	for p, h := range map[string]http.HandlerFunc{
 		"GET /api/cohorts": a.cohorts, "POST /api/cohorts": a.createCohort, "POST /api/cohorts/{cohort}/members": a.addMember, "DELETE /api/cohorts/{cohort}/members/{user}": a.removeMember,
 		"GET /api/courses/{course}/cohorts": a.courseCohorts, "POST /api/courses/{course}/cohorts": a.linkCohort, "DELETE /api/courses/{course}/cohorts/{cohort}": a.unlinkCohort,

@@ -21,6 +21,7 @@ services:
       DATABASE_URL: "postgres://lms:${POSTGRES_PASSWORD}@db:5432/larago_lms?sslmode=disable"
       LISTEN_ADDR: 0.0.0.0:8080
       STATIC_DIR: /app/static
+      UPLOAD_DIR: /app/uploads
       DEMO_SEED: ${DEMO_SEED:-false}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
     ports:
@@ -28,7 +29,10 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      - uploads:/app/uploads
     init: true
     restart: unless-stopped
 volumes:
   postgres_data:
+  uploads:

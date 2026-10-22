@@ -1,4 +1,11 @@
-import { type ReactNode, useState } from "react";
+import {
+  type ReactNode,
+  type ReactElement,
+  useState,
+  useId,
+  isValidElement,
+  cloneElement,
+} from "react";
 import {
   X,
   LoaderCircle,
@@ -60,11 +67,16 @@ export function Field({
   label: string;
   children: ReactNode;
 }) {
+  const fieldId = useId();
   return (
-    <label className="field">
-      <span>{label}</span>
-      {children}
-    </label>
+    <div className="field">
+      <label htmlFor={fieldId}>{label}</label>
+      {isValidElement(children)
+        ? cloneElement(children as ReactElement<{ id?: string }>, {
+            id: fieldId,
+          })
+        : children}
+    </div>
   );
 }
 export function Empty({

@@ -27,6 +27,7 @@ import {
   type ImportReport,
   type Section,
   kinds,
+  activityKinds,
   initials,
 } from "./types";
 import { Empty, Field, FormModal, Modal, Submit } from "./components";
@@ -374,7 +375,9 @@ export function BankView({
         <div className="category-tabs">
           {[
             { id: "all", title: "Все элементы" },
-            ...Object.entries(kinds).map(([id, title]) => ({ id, title })),
+            ...Object.entries(activityKinds)
+              .filter(([id]) => id !== "file" && id !== "folder")
+              .map(([id, title]) => ({ id, title })),
           ].map((k) => (
             <button
               key={k.id}
@@ -417,7 +420,9 @@ export function BankView({
                   <FileText size={23} />
                 )}
               </span>
-              <span className="badge">{kinds[i.kind]}</span>
+              <span className="badge">
+                {activityKinds[i.kind] || kinds[i.kind]}
+              </span>
             </div>
             <h3 className="mt-5">{i.title}</h3>
             <p className="muted text-xs mt-2">
@@ -501,7 +506,9 @@ export function BankView({
       )}
       {preview && (
         <Modal title={preview.title} close={() => setPreview(undefined)}>
-          <span className="badge mb-5">{kinds[preview.kind]}</span>
+          <span className="badge mb-5">
+            {activityKinds[preview.kind] || kinds[preview.kind]}
+          </span>
           <article className="lesson-content">{preview.body}</article>
           {preview.url && (
             <a
@@ -513,6 +520,23 @@ export function BankView({
               Открыть ссылку <ExternalLink size={15} />
             </a>
           )}
+          {preview.data?.chapters?.map((c, i) => (
+            <section className="submitted-work mt-4" key={i}>
+              <h3>{c.title}</h3>
+              <p className="mt-3 whitespace-pre-wrap">{c.content}</p>
+            </section>
+          ))}
+          {preview.data?.entries?.map((v, i) => (
+            <section className="submitted-work mt-4" key={i}>
+              <h3>{v.term}</h3>
+              <p className="mt-3 whitespace-pre-wrap">{v.definition}</p>
+            </section>
+          ))}
+          {preview.data?.options?.map((o, i) => (
+            <p className="quiz-option mt-3" key={i}>
+              {o}
+            </p>
+          ))}
           {preview.kind === "quiz" &&
             preview.questions.map((q, i) => (
               <div key={i} className="quiz-edit mt-4">
